@@ -1,0 +1,158 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
+void main() => runApp(CrashGameSnifferApp());
+
+class CrashGameSnifferApp extends StatefulWidget {
+  @override
+  _CrashGameSnifferAppState createState() => _CrashGameSnifferAppState();
+}
+
+class _CrashGameSnifferAppState extends State<CrashGameSnifferApp> {
+  late InAppWebViewController _controller;
+  List<NetworkLog> logs = [];
+  List<NetworkLog> filteredLogs = [];
+  final String gameUrl = "https://1x-bet.mobi/au/games/crash?platform=mobile";
+
+  final TextEditingController _searchController = TextEditingController();
+
+  bool _filterCrashApi(Uri url) {
+    return url.host.contains("1x-bet.mobi") && url.path.contains("/crash");
+  }
+
+  void _addLog(String url, String? body) {
+    String displayedBody = "";
+    try {
+      if (body != null && body.isNotEmpty) {
+        var decoded = json.decode(body);
+        displayedBody = const JsonEncoder.withIndent('  ').convert(decoded);
+      }
+    } catch (e) {
+      displayedBody = body ?? "";
+    }
+    final newLog = NetworkLog(url, displayedBody);
+    setState(() {
+      logs.insert(0, newLog);
+      if (logs.length > 200) logs.removeLast();
+      _applyFilter(_searchController.text);
+    });
+  }
+
+  void _applyFilter(String query) {
+    setState(() {
+      if (query.trim().isEmpty) {
+        filteredLogs = List.from(logs);
+      } else {
+        filteredLogs = logs.where((log) {
+          final q = query.toLowerCase();
+          return log.url.toLowerCase().contains(q) ||
+              log.body.toLowerCase().contains(q);
+        }).toList();
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    _searchController.addListener(() {
+      _applyFilter(_searchController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildLogTile(NetworkLog log) {
+    return ExpansionTile(
+      title: Text(
+        log.url,
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      children: [
+        Container(
+          color: Colors.grey.shade100,
+          padding: EdgeInsets.all(8),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  log.body.isEmpty ? "(No Body)" : log.body,
+                  style: TextStyle(fontFamily: "Courier", fontSize: 13),
+                ),
+                IconButton(
+                  icon: Icon(Icons.copy, size: 20),
+                  tooltip: "Copy Body",
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: log.body));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("Body copied to clipboard")));
+                  },
+                ),
+              ],
+            ),
+          ),
+        )
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: "Crash Game Sniffer",
+      home: Scaffold(
+        appBar: AppBar(
+          title: Text("Crash Game Network Sniffer"),
+          bottom: PreferredSize(
+            preferredSize: Size.fromHeight(50),
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: "Search URL or Body...",
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                  filled: true,
+                  fillColor: Colors.white70,
+                ),
+              ),
+            ),
+          ),
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              flex: 2,
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: Uri.parse(gameUrl)),
+                initialOptions: InAppWebViewGroupOptions(
+                  crossPlatform: InAppWebViewOptions(
+                    javaScriptEnabled: true,
+                    useOnLoadResource: true,
+                  ),
+                ),
+                onWebViewCreated: (controller) {
+                  _controller = controller;
+                },
+                onLoadResource: (controller, resource) {
+                  if (_filterCrashApi(resource.url)) {
+                    _addLog(resource.url.toString(), null);
+                  }
+                },
+                shouldInterceptRequest: (controller, request) async {
+                  if (_filterCrashApi(request.url)) {
+                    String? bodyString;
+                    try {
+                      if (request.body != null && request.body!.i
